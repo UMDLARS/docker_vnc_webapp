@@ -10,7 +10,7 @@ import docker
 # Websocket stuff
 import eventlet
 from docker import *
-from flask import Flask, render_template, session, request, \
+from flask import Flask, render_template, redirect, session, request, \
     copy_current_request_context
 from flask_socketio import SocketIO, emit, disconnect
 
@@ -113,7 +113,7 @@ def newNetwork(subnet):
     )
 
 
-def newContainer(imageName):
+def newContainer(imageName, bindport):
     global networkCount
     session['port'] = generatePort()
     session['container'] = generateName()
@@ -127,17 +127,58 @@ def newContainer(imageName):
                           network=str(session['container']),
                           name=str(session['container']),
                           user='0',
-                          ports={'6901/tcp': str(session['port'])},
+                          ports={bindport: str(session['port'])},
                           environment=["VNC_PW=" + str(session['password']),
                                        "VNC_RESOLUTION=800x600"])
     networkCount += 1
 
 
-def getDocker(imageName):
-    newContainer(imageName)
+def newContainerOpenCart(imageName, bindport):
+    global networkCount
+    session['port'] = generatePort()
+    session['container'] = generateName()
+    session['password'] = randomStringDigits(20)
+    # Adding this to the master list
+    dockerlist[session['container']] = session['port']
+    newNetwork(('172.11.' + str(networkCount % 256) + '.0/24'))
+    client.containers.run(imageName,
+                          tty=True,
+                          detach=True,
+                          network=str(session['container']),
+                          name=str(session['container']),
+                          user='0',
+                          ports={bindport: str(session['port'])}
+                          )
+    thisContainer = client.containers.get(session['container'])
+    command = '/bin/bash /temp.sh ' + str(host) + ':' +str(session['port'])
+    print(command)
+    thisContainer.exec_run(cmd=command)
+    networkCount += 1
+
+def getDocker(imageName, bindport):
+    newContainer(imageName, bindport)
     url = ('http://' + str(host) + ':' + str(session['port']) + '/?password=' + str(session['password']))
     print(url)
     return url
+
+def getDockerOpenCart(imageName, bindport):
+    newContainerOpenCart(imageName, bindport)
+    url = ('http://' + str(host) + ':' + str(session['port']) + '/')
+    print(url)
+    return url
+
+@app.route('/opencart')
+def opencart():
+    global portlist
+    global namelist
+    global dockerlist
+    print(dockerlist)
+    if spaceForDocker(docker_limit):
+        return render_template('error.html')
+
+    return redirect(getDockerOpenCart('atr2600/opencart','80'))
+
+
 
 @app.route('/')
 def index():
@@ -150,7 +191,7 @@ def index():
     if spaceForDocker(docker_limit):
         return render_template('error.html')
 
-    url = getDocker('atr2600/zenmap-vnc-ubuntu')
+    url = getDocker('atr2600/zenmap-vnc-ubuntu','6901/tcp')
     return render_template('index.html', iframe=url, async_mode=socketio.async_mode)
 
 
